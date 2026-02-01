@@ -3,114 +3,155 @@ package qrcode2console
 import (
 	"bytes"
 	"fmt"
-	"github.com/disintegration/imaging"
-	"github.com/skip2/go-qrcode"
 	"image"
 	"image/color"
 	"image/png"
 	"os"
+
+	"github.com/disintegration/imaging"
+	"github.com/skip2/go-qrcode"
 )
 
 /*
-* @Author:hanyajun
-* @Date:2019/4/30 14:56
-* @Name:qrcode2console
-* @Function: 二维码输出到console
+ * @Author: Han-Ya-Jun
+ * @Date: 2019/4/30 14:56
+ * @Name: qrcode2console
+ * @Function: 二维码输出到控制台
  */
+
 const (
-	QR_CODE_SIZE        = 256
-	SHRINK_QR_CODE_SIZE = 35
-	MARGIN              = 29
-	MULTIPLE            = 6
+	// QRCodeSize 标准二维码尺寸
+	QRCodeSize = 256
+	// ShrinkQRCodeSize 缩小后的二维码尺寸
+	ShrinkQRCodeSize = 35
+	// Margin 二维码边距
+	Margin = 29
+	// Multiple 缩小倍数
+	Multiple = 6
 )
 
+// QRCode2Console 二维码到控制台转换器
 type QRCode2Console struct {
 	url             string
 	img             image.Image
-	Path            string
+	path            string
 	kind            int
 	genImg          bool
-	points          [QR_CODE_SIZE][QR_CODE_SIZE]int
-	tmpShrinkPoints [QR_CODE_SIZE][SHRINK_QR_CODE_SIZE]int
-	shrinkPoints    [SHRINK_QR_CODE_SIZE][SHRINK_QR_CODE_SIZE]int
+	points          [QRCodeSize][QRCodeSize]int
+	tmpShrinkPoints [QRCodeSize][ShrinkQRCodeSize]int
+	shrinkPoints    [ShrinkQRCodeSize][ShrinkQRCodeSize]int
 }
 
-//NewQRCode 返回二维码结构
-func NewQRCode2ConsoleWithUrl(url string, genImg bool) *QRCode2Console {
+// NewWithURL 从URL创建二维码转换器
+func NewWithURL(url string, genImg bool) (*QRCode2Console, error) {
 	qr := &QRCode2Console{
 		url:    url,
 		genImg: genImg,
 		kind:   0,
 	}
-	qr.genQRCode()
-	return qr
+	if err := qr.genQRCode(); err != nil {
+		return nil, fmt.Errorf("生成二维码失败: %w", err)
+	}
+	return qr, nil
 }
 
-//通过二维码图片
-func NewQRCode2ConsoleWithPath(path string) *QRCode2Console {
+// NewWithPath 从图片路径创建二维码转换器
+func NewWithPath(path string) (*QRCode2Console, error) {
 	qr := &QRCode2Console{
-		Path:   path,
+		path:   path,
 		genImg: false,
 		kind:   1,
 	}
-	qr.genQRCode()
-	return qr
+	if err := qr.genQRCode(); err != nil {
+		return nil, fmt.Errorf("加载二维码图片失败: %w", err)
+	}
+	return qr, nil
 }
 
-//genQRCode 生成二维码矩阵
+// genQRCode 生成二维码矩阵
 func (qr *QRCode2Console) genQRCode() error {
-	var err error
 	var img image.Image
-	if qr.kind == 0 {
-		code, err := qrcode.Encode(qr.url, qrcode.Medium, QR_CODE_SIZE)
+
+	switch qr.kind {
+	case 0: // 从URL生成
+		code, err := qrcode.Encode(qr.url, qrcode.Medium, QRCodeSize)
 		if err != nil {
-			return err
+			return fmt.Errorf("编码二维码失败: %w", err)
 		}
 		buf := bytes.NewBuffer(code)
 		img, err = png.Decode(buf)
-	} else if qr.kind == 1 {
-		file, err := os.Open(qr.Path)
 		if err != nil {
-			return err
+			return fmt.Errorf("解码PNG失败: %w", err)
+		}
+	case 1: // 从图片加载
+		file, err := os.Open(qr.path)
+		if err != nil {
+			return fmt.Errorf("打开文件失败: %w", err)
 		}
 		defer file.Close()
-		dstImag, _, err := image.Decode(file)
-		img = imaging.Resize(dstImag, QR_CODE_SIZE, QR_CODE_SIZE, imaging.Lanczos)
+
+		dstImg, _, err := image.Decode(file)
+		if err != nil {
+			return fmt.Errorf("解码图片失败: %w", err)
+		}
+		img = imaging.Resize(dstImg, QRCodeSize, QRCodeSize, imaging.Lanczos)
+	default:
+		return fmt.Errorf("不支持的二维码类型: %d", qr.kind)
 	}
-	if err != nil {
-		return err
-	}
+
 	qr.img = img
 
+	// 如果需要生成图片文件
 	if qr.genImg {
-		newPng, _ := os.Create("qrcode.png")
-		defer newPng.Close()
-		png.Encode(newPng, img)
+		if err := qr.saveImage("qrcode.png"); err != nil {
+			return fmt.Errorf("保存二维码图片失败: %w", err)
+		}
 	}
 
 	return nil
 }
 
+// SetImage 设置自定义图片
 func (qr *QRCode2Console) SetImage(img image.Image) error {
 	qr.img = img
 
 	if qr.genImg {
-		newPng, _ := os.Create("qrcode.png")
-		defer newPng.Close()
-		png.Encode(newPng, img)
+		if err := qr.saveImage("qrcode_custom.png"); err != nil {
+			return fmt.Errorf("保存自定义二维码图片失败: %w", err)
+		}
 	}
 
 	return nil
 }
 
-//binarization 二维码图片二值化 0－1
-func (qr *QRCode2Console) binarization() {
-	gray := image.NewGray(image.Rect(0, 0, QR_CODE_SIZE, QR_CODE_SIZE))
-	for x := 0; x < QR_CODE_SIZE; x++ {
-		for y := 0; y < QR_CODE_SIZE; y++ {
+// saveImage 保存图片到文件
+func (qr *QRCode2Console) saveImage(filename string) error {
+	file, err := os.Create(filename)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	return png.Encode(file, qr.img)
+}
+
+// binarization 二维码图片二值化 (0-1)
+func (qr *QRCode2Console) binarization() error {
+	if qr.img == nil {
+		return fmt.Errorf("二维码图片未初始化")
+	}
+
+	gray := image.NewGray(image.Rect(0, 0, QRCodeSize, QRCodeSize))
+	bounds := qr.img.Bounds()
+
+	for x := bounds.Min.X; x < bounds.Max.X && x < QRCodeSize; x++ {
+		for y := bounds.Min.Y; y < bounds.Max.Y && y < QRCodeSize; y++ {
 			r32, g32, b32, _ := qr.img.At(x, y).RGBA()
 			r, g, b := int(r32>>8), int(g32>>8), int(b32>>8)
-			if (r+g+b)/3 > 180 {
+			
+			// 计算灰度值并二值化
+			grayValue := (r + g + b) / 3
+			if grayValue > 180 {
 				qr.points[y][x] = 0
 				gray.Set(x, y, color.Gray{uint8(255)})
 			} else {
@@ -121,44 +162,115 @@ func (qr *QRCode2Console) binarization() {
 	}
 
 	if qr.genImg {
-		newPng, _ := os.Create("qrcode.binarization.png")
-		defer newPng.Close()
-		png.Encode(newPng, gray)
-	}
-}
-
-//shrink 缩小二值化数组
-func (qr *QRCode2Console) shrink() {
-	for x := 0; x < QR_CODE_SIZE; x++ {
-		cal := 1
-		for y := MARGIN + 1; y < QR_CODE_SIZE-MARGIN; y += MULTIPLE {
-			qr.tmpShrinkPoints[x][cal] = qr.points[x][y]
-			cal++
+		if err := saveGrayImage("qrcode_binarization.png", gray); err != nil {
+			return fmt.Errorf("保存二值化图片失败: %w", err)
 		}
 	}
 
-	for y := 1; y < SHRINK_QR_CODE_SIZE-1; y++ {
+	return nil
+}
+
+// saveGrayImage 保存灰度图片
+func saveGrayImage(filename string, gray *image.Gray) error {
+	file, err := os.Create(filename)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	return png.Encode(file, gray)
+}
+
+// shrink 缩小二值化数组
+func (qr *QRCode2Console) shrink() {
+	// 水平方向缩小
+	for x := 0; x < QRCodeSize; x++ {
+		col := 1
+		for y := Margin + 1; y < QRCodeSize-Margin && col < ShrinkQRCodeSize-1; y += Multiple {
+			qr.tmpShrinkPoints[x][col] = qr.points[x][y]
+			col++
+		}
+	}
+
+	// 垂直方向缩小
+	for y := 1; y < ShrinkQRCodeSize-1; y++ {
 		row := 1
-		for x := MARGIN + 1; x < QR_CODE_SIZE-MARGIN; x += MULTIPLE {
+		for x := Margin + 1; x < QRCodeSize-Margin && row < ShrinkQRCodeSize-1; x += Multiple {
 			qr.shrinkPoints[row][y] = qr.tmpShrinkPoints[x][y]
 			row++
 		}
 	}
 }
 
-//Output 控制台输出二维码
-func (qr *QRCode2Console) Output() {
-	qr.binarization()
+// Output 控制台输出二维码
+func (qr *QRCode2Console) Output() error {
+	if err := qr.binarization(); err != nil {
+		return fmt.Errorf("二值化失败: %w", err)
+	}
+	
 	qr.shrink()
-	for x := 0; x < SHRINK_QR_CODE_SIZE; x++ {
-		for y := 0; y < SHRINK_QR_CODE_SIZE; y++ {
+	
+	// 使用Unicode字符增强显示效果
+	for x := 0; x < ShrinkQRCodeSize; x++ {
+		for y := 0; y < ShrinkQRCodeSize; y++ {
 			if qr.shrinkPoints[x][y] == 1 {
-				fmt.Print("\033[40;40m  \033[0m")
-				//randColor()
+				// 黑色方块
+				fmt.Print("██")
 			} else {
-				fmt.Print("\033[47;30m  \033[0m")
+				// 白色方块
+				fmt.Print("  ")
 			}
 		}
 		fmt.Println()
 	}
+	
+	return nil
+}
+
+// OutputColored 彩色控制台输出二维码
+func (qr *QRCode2Console) OutputColored() error {
+	if err := qr.binarization(); err != nil {
+		return fmt.Errorf("二值化失败: %w", err)
+	}
+	
+	qr.shrink()
+	
+	// 使用ANSI颜色代码
+	for x := 0; x < ShrinkQRCodeSize; x++ {
+		for y := 0; y < ShrinkQRCodeSize; y++ {
+			if qr.shrinkPoints[x][y] == 1 {
+				// 黑色背景
+				fmt.Print("\033[40m  \033[0m")
+			} else {
+				// 白色背景
+				fmt.Print("\033[47m  \033[0m")
+			}
+		}
+		fmt.Println()
+	}
+	
+	return nil
+}
+
+// ToString 将二维码转换为字符串
+func (qr *QRCode2Console) ToString() (string, error) {
+	if err := qr.binarization(); err != nil {
+		return "", fmt.Errorf("二值化失败: %w", err)
+	}
+	
+	qr.shrink()
+	
+	var result string
+	for x := 0; x < ShrinkQRCodeSize; x++ {
+		for y := 0; y < ShrinkQRCodeSize; y++ {
+			if qr.shrinkPoints[x][y] == 1 {
+				result += "██"
+			} else {
+				result += "  "
+			}
+		}
+		result += "\n"
+	}
+	
+	return result, nil
 }
